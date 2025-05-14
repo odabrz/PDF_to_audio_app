@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{% block title %}My Conversions - PDF to Audio Converter{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <h2><i class="fas fa-history"></i> My Conversion History</h2>
+    
+    {% if not conversions %}
+        <div class="empty-state">
+            <i class="fas fa-file-alt"></i>
+            <p>You haven't converted any files yet.</p>
+            <a href="{{ url_for('index') }}" class="btn">Convert a PDF</a>
+        </div>
+    {% else %}
+        <div class="conversion-list">
+            {% for conv in conversions %}
+            <div class="conversion-item">
+                <div class="conversion-info">
+                    <h3>{{ conv['original_filename'] }}</h3>
+                    <p class="meta">
+                        Converted on {{ conv['conversion_date'] }} | 
+                        Downloads: {{ conv['download_count'] }}
+                    </p>
+                </div>
+                <div class="conversion-actions">
+                    <a href="{{ url_for('play_audio', filename=conv['audio_filename']) }}" class="btn small-btn">
+                        <i class="fas fa-play"></i> Play
+                    </a>
+                    <a href="{{ url_for('download_file', filename=conv['audio_filename']) }}" class="btn small-btn">
+                        <i class="fas fa-download"></i> Download
+                    </a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+</div>
+{% endblock %}
