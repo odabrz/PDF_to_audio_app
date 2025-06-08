@@ -1,39 +1,85 @@
 {% extends "base.html" %}
 
-{% block title %}My Conversions - PDF to Audio Converter{% endblock %}
-
 {% block content %}
+
+<head>
+    <link rel="stylesheet" href="/static/styles.css">
+
+     <!--<script src="/static/script.js"></script>-->
+</head>
+
 <div class="dashboard-container">
-    <h2><i class="fas fa-history"></i> My Conversion History</h2>
+    <h2><i class="fas fa-tachometer-alt"></i> Your Dashboard</h2>
     
-    {% if not conversions %}
-        <div class="empty-state">
-            <i class="fas fa-file-alt"></i>
-            <p>You haven't converted any files yet.</p>
-            <a href="{{ url_for('index') }}" class="btn">Convert a PDF</a>
+    <div class="user-info">
+        <div class="user-card">
+            <div class="user-avatar">
+                <i class="fas fa-user-circle"></i>
+            </div>
+            <div class="user-details">
+                <h3>{{ current_user.username }}</h3>
+                <p>{{ current_user.email }}</p>
+                <p class="join-date">Member since: {{ current_user.created_at.strftime('%B %d, %Y') }}</p>
+            </div>
         </div>
-    {% else %}
-        <div class="conversion-list">
-            {% for conv in conversions %}
-            <div class="conversion-item">
-                <div class="conversion-info">
-                    <h3>{{ conv['original_filename'] }}</h3>
-                    <p class="meta">
-                        Converted on {{ conv['conversion_date'] }} | 
-                        Downloads: {{ conv['download_count'] }}
-                    </p>
-                </div>
-                <div class="conversion-actions">
-                    <a href="{{ url_for('play_audio', filename=conv['audio_filename']) }}" class="btn small-btn">
-                        <i class="fas fa-play"></i> Play
-                    </a>
-                    <a href="{{ url_for('download_file', filename=conv['audio_filename']) }}" class="btn small-btn">
-                        <i class="fas fa-download"></i> Download
-                    </a>
+    </div>
+    
+    <div class="stats-summary">
+        <div class="stat-card">
+            <div class="stat-icon total-conversions">
+                <i class="fas fa-file-audio"></i>
+            </div>
+            <div class="stat-info">
+                <h4>Total Conversions</h4>
+                <p>{{ conversions|length }}</p>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon total-downloads">
+                <i class="fas fa-download"></i>
+            </div>
+            <div class="stat-info">
+                <h4>Total Downloads</h4>
+                <p>{{ total_downloads }}</p>
+            </div>
+        </div>
+    </div>
+
+    <h3 class="section-title"><i class="fas fa-history"></i> Conversion History</h3>
+    
+    {% if conversions %}
+    <div class="conversion-list">
+        {% for conversion in conversions %}
+        <div class="conversion-item">
+            <div class="conversion-info">
+                <h3>{{ conversion.original_filename }}</h3>
+                <div class="meta">
+                    <span><i class="far fa-calendar-alt"></i> {{ conversion.conversion_date.strftime('%B %d, %Y %H:%M') }}</span>
+                    <span><i class="fas fa-download"></i> Downloaded {{ conversion.download_count }} time(s)</span>
                 </div>
             </div>
-            {% endfor %}
+            <div class="conversion-actions">
+                <a href="{{ url_for('play_audio', filename=conversion.audio_filename) }}" 
+                   class="btn play-btn small-btn">
+                    <i class="fas fa-play"></i> Play
+                </a>
+                <a href="{{ url_for('download_file', filename=conversion.audio_filename) }}" 
+                   class="btn download-btn small-btn">
+                    <i class="fas fa-download"></i> Download
+                </a>
+            </div>
         </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <i class="fas fa-file-audio"></i>
+        <h3>No conversions yet</h3>
+        <p>Upload your first PDF to convert it to audio</p>
+        <a href="{{ url_for('index') }}" class="convert-btn">
+            <i class="fas fa-file-upload"></i> Convert PDF
+        </a>
+    </div>
     {% endif %}
 </div>
 {% endblock %}

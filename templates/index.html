@@ -1,16 +1,32 @@
 {% extends "base.html" %}
 
 {% block content %}
+
+<head>
+    <link rel="stylesheet" href="/static/styles.css">
+
+     <!--<script src="/static/script.js"></script>-->
+</head>
+
 <div class="converter-container">
+    <h1><i class="fas fa-file-pdf"></i> PDF to Audio Converter</h1>
+    
+    {% if current_user.is_authenticated %}
+    <div class="welcome-message">
+        <p><i class="fas fa-user"></i> Welcome back, {{ current_user.username }}! Ready to convert your PDFs?</p>
+    </div>
+    {% endif %}
+
     <div class="upload-box">
-        <h2><i class="fas fa-upload"></i> Upload PDF</h2>
-        <form id="upload-form" method="POST" action="{{ url_for('upload_file') }}" enctype="multipart/form-data">
+        <h2><i class="fas fa-cloud-upload-alt"></i> Upload PDF File</h2>
+        <form id="upload-form" method="POST" enctype="multipart/form-data" action="{{ url_for('upload_file') }}">
             <div class="file-upload-wrapper">
-                <input type="file" id="file-input" name="file" accept=".pdf" required>
                 <label for="file-input" class="file-upload-label">
-                    <i class="fas fa-cloud-upload-alt"></i>
+                    <i class="fas fa-file-pdf"></i>
                     <span id="file-name">Choose a PDF file</span>
+                    <span id="file-preview-text"></span>
                 </label>
+                <input type="file" id="file-input" name="file" accept=".pdf" required>
             </div>
             <button type="submit" class="convert-btn">
                 <i class="fas fa-exchange-alt"></i> Convert to Audio
@@ -20,25 +36,25 @@
 
     {% if audio_file %}
     <div class="result-box">
-        <h3><i class="fas fa-check-circle"></i> Conversion Complete!</h3>
+        <h3><i class="fas fa-check-circle"></i> Conversion Successful!</h3>
         <div class="file-info">
             <p><strong>Original File:</strong> {{ original_file }}</p>
-            <p><strong>Audio File:</strong> {{ audio_file }}</p>
+            <p><strong>Converted On:</strong> {{ current_time }}</p>
         </div>
         
         <div class="audio-player">
-            <audio controls id="audio-preview">
+            <audio id="audio-preview" controls>
                 <source src="{{ url_for('play_audio', filename=audio_file) }}" type="audio/mpeg">
                 Your browser does not support the audio element.
             </audio>
         </div>
         
         <div class="action-buttons">
-            <a href="{{ url_for('play_audio', filename=audio_file) }}" class="btn play-btn" target="_blank">
+            <a href="{{ url_for('play_audio', filename=audio_file) }}" class="btn play-btn">
                 <i class="fas fa-play"></i> Play Audio
             </a>
             <a href="{{ url_for('download_file', filename=audio_file) }}" class="btn download-btn">
-                <i class="fas fa-download"></i> Download Audio
+                <i class="fas fa-download"></i> Download MP3
             </a>
         </div>
     </div>

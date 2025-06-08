@@ -1,48 +1,56 @@
-from flask import Flask, render_template, request, redirect, url_for, send_from_directory, flash, session
 import os
-import PyPDF2
-import pyttsx3
+from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from datetime import datetime
-import sqlite3
+import PyPDF2
+import pyttsx3
 from functools import wraps
 
+# Initialize Flask app
 app = Flask(__name__)
-app.secret_key = 'your_secret_key_here'
 
 # Configuration
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['ALLOWED_EXTENSIONS'] = {'pdf'}
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
-app.config['DATABASE'] = 'database/conversions.db'
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB
 
-# Ensure folders exist
+# Initialize extensions
+db = SQLAlchemy(app)
+login_manager = LoginManager(app)
+login_manager.login_view = 'login'
+
+# Create upload folder if it doesn't exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-os.makedirs('database', exist_ok=True)
 
-# Database setup
-def get_db():
-    db = sqlite3.connect(app.config['DATABASE'])
-    db.row_factory = sqlite3.Row
-    return db
+# Models
+class User(UserMixin, db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(50), unique=True, nullable=False)
+    email = db.Column(db.String(100), unique=True, nullable=False)
+    password = db.Column(db.String(200), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    conversions = db.relationship('Conversion', backref='user', lazy=True)
 
-def init_db():
-    with app.app_context():
-        db = get_db()
-        db.execute('''
-            CREATE TABLE IF NOT EXISTS conversions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_ip TEXT NOT NULL,
-                original_filename TEXT NOT NULL,
-                audio_filename TEXT NOT NULL,
-                conversion_date TEXT NOT NULL,
-                download_count INTEGER DEFAULT 0
-            )
-        ''')
-        db.commit()
+class Conversion(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
+    original_filename = db.Column(db.String(100), nullable=False)
+    audio_filename = db.Column(db.String(100), nullable=False)
+    conversion_date = db.Column(db.DateTime, default=datetime.utcnow)
+    download_count = db.Column(db.Integer, default=0)
 
-init_db()
+# User loader
+@login_manager.user_loader
+def load_user(user_id):
+    return User.query.get(int(user_id))
 
+# Helper functions
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
@@ -59,87 +67,150 @@ def pdf_to_audio(pdf_path, audio_path):
         
         engine.save_to_file(text, audio_path)
         engine.runAndWait()
-        return True, "Conversion successful"
+        return True
     except Exception as e:
-        return False, str(e)
+        print(f"Conversion error: {e}")
+        return False
 
-def log_conversion(user_ip, original_file, audio_file):
-    db = get_db()
-    db.execute(
-        'INSERT INTO conversions (user_ip, original_filename, audio_filename, conversion_date) VALUES (?, ?, ?, ?)',
-        (user_ip, original_file, audio_file, datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-    )
-    db.commit()
-
-def increment_download(audio_file):
-    db = get_db()
-    db.execute(
-        'UPDATE conversions SET download_count = download_count + 1 WHERE audio_filename = ?',
-        (audio_file,)
-    )
-    db.commit()
-
-def get_user_conversions(user_ip):
-    db = get_db()
-    return db.execute(
-        'SELECT * FROM conversions WHERE user_ip = ? ORDER BY conversion_date DESC',
-        (user_ip,)
-    ).fetchall()
-
+# Routes
 @app.route('/')
 def index():
     return render_template('index.html')
 
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+        user = User.query.filter_by(email=email).first()
+
+        if user and check_password_hash(user.password, password):
+            login_user(user)
+            flash('Login successful!', 'success')
+            return redirect(url_for('dashboard'))
+        else:
+            flash('Invalid email or password', 'error')
+
+    return render_template('login.html')
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if current_user.is_authenticated:
+        return redirect(url_for('index'))
+
+    if request.method == 'POST':
+        username = request.form.get('username')
+        email = request.form.get('email')
+        password = request.form.get('password')
+        confirm_password = request.form.get('confirm_password')
+
+        if password != confirm_password:
+            flash('Passwords do not match', 'error')
+            return redirect(url_for('register'))
+
+        if User.query.filter_by(email=email).first():
+            flash('Email already exists', 'error')
+            return redirect(url_for('register'))
+
+        if User.query.filter_by(username=username).first():
+            flash('Username already exists', 'error')
+            return redirect(url_for('register'))
+
+        hashed_password = generate_password_hash(password, method='sha256')
+        new_user = User(username=username, email=email, password=hashed_password)
+        db.session.add(new_user)
+        db.session.commit()
+
+        flash('Registration successful! Please login.', 'success')
+        return redirect(url_for('login'))
+
+    return render_template('register.html')
+
+@app.route('/logout')
+@login_required
+def logout():
+    logout_user()
+    flash('You have been logged out', 'success')
+    return redirect(url_for('index'))
+
 @app.route('/upload', methods=['POST'])
+@login_required
 def upload_file():
     if 'file' not in request.files:
         flash('No file selected', 'error')
         return redirect(url_for('index'))
-    
+
     file = request.files['file']
-    
     if file.filename == '':
         flash('No file selected', 'error')
         return redirect(url_for('index'))
-    
+
     if file and allowed_file(file.filename):
         filename = secure_filename(file.filename)
         pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(pdf_path)
-        
+
         audio_filename = f"{os.path.splitext(filename)[0]}_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp3"
         audio_path = os.path.join(app.config['UPLOAD_FOLDER'], audio_filename)
-        
-        success, message = pdf_to_audio(pdf_path, audio_path)
-        
-        if success:
-            user_ip = request.remote_addr
-            log_conversion(user_ip, filename, audio_filename)
-            session['recent_conversion'] = audio_filename
+
+        if pdf_to_audio(pdf_path, audio_path):
+            new_conversion = Conversion(
+                user_id=current_user.id,
+                original_filename=filename,
+                audio_filename=audio_filename
+            )
+            db.session.add(new_conversion)
+            db.session.commit()
+
             return render_template('index.html', 
                                 audio_file=audio_filename,
                                 original_file=filename)
         else:
-            flash(f'Conversion failed: {message}', 'error')
+            flash('Conversion failed. Please try again.', 'error')
             return redirect(url_for('index'))
-    
-    flash('Invalid file type. Please upload a PDF file.', 'error')
+
+    flash('Invalid file type. Only PDF files are allowed.', 'error')
     return redirect(url_for('index'))
 
 @app.route('/play/<filename>')
+@login_required
 def play_audio(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 @app.route('/download/<filename>')
+@login_required
 def download_file(filename):
-    increment_download(filename)
+    conversion = Conversion.query.filter_by(audio_filename=filename).first()
+    if conversion:
+        conversion.download_count += 1
+        db.session.commit()
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename, as_attachment=True)
 
 @app.route('/dashboard')
+@login_required
 def dashboard():
-    user_ip = request.remote_addr
-    conversions = get_user_conversions(user_ip)
-    return render_template('dashboard.html', conversions=conversions)
+    conversions = Conversion.query.filter_by(user_id=current_user.id).order_by(Conversion.conversion_date.desc()).all()
+    total_downloads = sum(conv.download_count for conv in conversions)
+    return render_template('dashboard.html', 
+                         conversions=conversions,
+                         total_downloads=total_downloads)
+
+# Error handlers
+@app.errorhandler(404)
+def not_found_error(error):
+    return render_template('404.html'), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    db.session.rollback()
+    return render_template('500.html'), 500
+
+# Initialize database
+with app.app_context():
+    db.create_all()
 
 if __name__ == '__main__':
     app.run(debug=True)
