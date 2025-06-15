@@ -6,15 +6,18 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from datetime import datetime
 import PyPDF2
-import pyttsx3
-from functools import wraps
+from gtts import gTTS
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Initialize Flask app
 app = Flask(__name__)
 
 # Configuration
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///database.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = 'uploads'
 app.config['ALLOWED_EXTENSIONS'] = {'pdf'}
@@ -48,29 +51,41 @@ class Conversion(db.Model):
 # User loader
 @login_manager.user_loader
 def load_user(user_id):
-    return User.query.get(int(user_id))
+    return db.session.get(User, int(user_id))
 
 # Helper functions
 def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
-def pdf_to_audio(pdf_path, audio_path):
+def pdf_to_audio(pdf_path, audio_path, language_code='en'):
     try:
-        engine = pyttsx3.init()
-        engine.setProperty('rate', 150)
-        engine.setProperty('volume', 0.9)
-        
         with open(pdf_path, 'rb') as pdf_file:
             pdf_reader = PyPDF2.PdfReader(pdf_file)
-            text = "".join(page.extract_text() for page in pdf_reader.pages)
+            text = "".join(page.extract_text() or "" for page in pdf_reader.pages)
+
+        if not text.strip():
+            print("Conversion error: No extractable text found in PDF.")
+            return False, None
         
-        engine.save_to_file(text, audio_path)
-        engine.runAndWait()
-        return True
+        # Try gTTS (online) first
+        try:
+            tts = gTTS(text=text, lang=language_code)
+            tts.save(audio_path)
+            print(f"Conversion successful with gTTS: Audio saved to {audio_path}")
+            return True, 'gTTS (Google Text-to-Speech)'
+        except Exception as gtts_error:
+            print(f"gTTS failed ({gtts_error}), falling back to pyttsx3...")
+            import pyttsx3
+            engine = pyttsx3.init()
+            engine.save_to_file(text, audio_path)
+            engine.runAndWait()
+            print(f"Conversion successful with pyttsx3: Audio saved to {audio_path}")
+            return True, 'pyttsx3 (Offline TTS)'
+        
     except Exception as e:
         print(f"Conversion error: {e}")
-        return False
+        return False, None
 
 # Routes
 @app.route('/')
@@ -119,7 +134,7 @@ def register():
             flash('Username already exists', 'error')
             return redirect(url_for('register'))
 
-        hashed_password = generate_password_hash(password, method='sha256')
+        hashed_password = generate_password_hash(password, method='scrypt')
         new_user = User(username=username, email=email, password=hashed_password)
         db.session.add(new_user)
         db.session.commit()
@@ -136,44 +151,54 @@ def logout():
     flash('You have been logged out', 'success')
     return redirect(url_for('index'))
 
+# --- UPDATED /upload route to pass TTS engine info to template ---
 @app.route('/upload', methods=['POST'])
 @login_required
 def upload_file():
     if 'file' not in request.files:
-        flash('No file selected', 'error')
+        flash('No file selected (file part missing)', 'error')
         return redirect(url_for('index'))
 
     file = request.files['file']
     if file.filename == '':
-        flash('No file selected', 'error')
+        flash('No file selected (empty filename)', 'error')
         return redirect(url_for('index'))
 
-    if file and allowed_file(file.filename):
-        filename = secure_filename(file.filename)
-        pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(pdf_path)
+    if not allowed_file(file.filename):
+        flash('Invalid file type. Only PDF files are allowed.', 'error')
+        return redirect(url_for('index'))
 
-        audio_filename = f"{os.path.splitext(filename)[0]}_{datetime.now().strftime('%Y%m%d%H%M%S')}.mp3"
-        audio_path = os.path.join(app.config['UPLOAD_FOLDER'], audio_filename)
+    language = request.form.get('language', 'en')
 
-        if pdf_to_audio(pdf_path, audio_path):
-            new_conversion = Conversion(
-                user_id=current_user.id,
-                original_filename=filename,
-                audio_filename=audio_filename
-            )
-            db.session.add(new_conversion)
-            db.session.commit()
+    filename = secure_filename(file.filename)
+    timestamp = datetime.now().strftime('%Y%m%d%H%M%S')
+    saved_pdf_filename = f"{os.path.splitext(filename)[0]}_{timestamp}.pdf"
+    pdf_path = os.path.join(app.config['UPLOAD_FOLDER'], saved_pdf_filename)
+    file.save(pdf_path)
 
-            return render_template('index.html', 
-                                audio_file=audio_filename,
-                                original_file=filename)
-        else:
-            flash('Conversion failed. Please try again.', 'error')
-            return redirect(url_for('index'))
+    audio_filename = f"{os.path.splitext(filename)[0]}_{timestamp}.mp3"
+    audio_path = os.path.join(app.config['UPLOAD_FOLDER'], audio_filename)
 
-    flash('Invalid file type. Only PDF files are allowed.', 'error')
-    return redirect(url_for('index'))
+    success, tts_engine = pdf_to_audio(pdf_path, audio_path, language_code=language)
+    if not success:
+        flash(f"Conversion failed for {filename}. Please upload a valid PDF with extractable text.", 'error')
+        return redirect(url_for('index'))
+
+    new_conversion = Conversion(
+        user_id=current_user.id,
+        original_filename=filename,
+        audio_filename=audio_filename
+    )
+    db.session.add(new_conversion)
+    db.session.commit()
+
+    return render_template('index.html', 
+                            audio_file=audio_filename,
+                            original_file=filename,
+                            current_time=datetime.utcnow(),
+                            tts_engine=tts_engine)
+
+# -------------------------------------------------------------------
 
 @app.route('/play/<filename>')
 @login_required

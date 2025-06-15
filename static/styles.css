@@ -1,6 +1,6 @@
 :root {
-    --primary-color: #4361ee;
-    --secondary-color: #3f37c9;
+    --primary-color: #722f37;
+    --secondary-color: #4A1A2C;
     --accent-color: #4cc9f0;
     --light-color: #f8f9fa;
     --dark-color: #212529;
@@ -601,4 +601,31 @@ footer {
     .auth-container {
         padding: 30px 20px;
     }
+}
+
+.language-select-group {
+    margin-bottom: 20px;
+}
+
+.language-select-group label {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 500;
+}
+
+.language-select {
+    width: 100%;
+    padding: 12px 15px;
+    border: 1px solid #ddd;
+    border-radius: var(--border-radius);
+    font-size: 1rem;
+    transition: var(--transition);
+    background-color: white;
+    cursor: pointer;
+}
+
+.language-select:focus {
+    border-color: var(--primary-color);
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(67, 97, 238, 0.2);
 }
