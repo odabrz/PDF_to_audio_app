@@ -5,6 +5,7 @@ from flask_login import LoginManager, UserMixin, login_user, logout_user, login_
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from datetime import datetime
+from pydub import AudioSegment
 import PyPDF2
 from gtts import gTTS
 from dotenv import load_dotenv
@@ -58,34 +59,54 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
+
 def pdf_to_audio(pdf_path, audio_path, language_code='en'):
     try:
         with open(pdf_path, 'rb') as pdf_file:
             pdf_reader = PyPDF2.PdfReader(pdf_file)
-            text = "".join(page.extract_text() or "" for page in pdf_reader.pages)
+            if not pdf_reader.pages:
+                print("Conversion error: PDF has no pages.")
+                return False, None
 
-        if not text.strip():
-            print("Conversion error: No extractable text found in PDF.")
-            return False, None
-        
-        # Try gTTS (online) first
-        try:
-            tts = gTTS(text=text, lang=language_code)
-            tts.save(audio_path)
-            print(f"Conversion successful with gTTS: Audio saved to {audio_path}")
-            return True, 'gTTS (Google Text-to-Speech)'
-        except Exception as gtts_error:
-            print(f"gTTS failed ({gtts_error}), falling back to pyttsx3...")
-            import pyttsx3
-            engine = pyttsx3.init()
-            engine.save_to_file(text, audio_path)
-            engine.runAndWait()
-            print(f"Conversion successful with pyttsx3: Audio saved to {audio_path}")
-            return True, 'pyttsx3 (Offline TTS)'
+            temp_audio_files = []
+            for idx, page in enumerate(pdf_reader.pages):
+                text = page.extract_text() or ""
+                if not text.strip():
+                    print(f"Page {idx+1} has no extractable text, skipping.")
+                    continue
+
+                try:
+                    tts = gTTS(text=text, lang=language_code)
+                    temp_path = f"uploads/temp_page_{idx+1}.mp3"
+                    tts.save(temp_path)
+                    temp_audio_files.append(temp_path)
+                    print(f"Page {idx+1}: Converted successfully.")
+                except Exception as e:
+                    print(f"gTTS failed on page {idx+1}: {e}")
+                    continue
+
+            if not temp_audio_files:
+                print("No pages converted.")
+                return False, None
+
+            # Combine audio files
+            combined = AudioSegment.empty()
+            for f in temp_audio_files:
+                combined += AudioSegment.from_file(f)
+
+            combined.export(audio_path, format="mp3")
+            print(f"Combined audio saved at {audio_path}")
+
+            # Cleanup
+            for f in temp_audio_files:
+                os.remove(f)
+
+            return True, 'gTTS (page-by-page chunking)'
         
     except Exception as e:
         print(f"Conversion error: {e}")
         return False, None
+
 
 # Routes
 @app.route('/')
